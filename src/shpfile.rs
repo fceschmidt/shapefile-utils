@@ -15,7 +15,7 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 /// The x is for latitude, y is for longitude.
 /// The z is for altitude and optional.
 /// The m is a "measure" axis for scalar maps, and optional.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct BoundingBoxZ {
     /// The minimum latitude.
     pub x_min: f64,
@@ -39,7 +39,7 @@ pub struct BoundingBoxZ {
 }
 
 /// The header of a SHP file, as defined in the spec.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FileHeader {
     /// The length of the file in 16-bit words.
     file_length: i32,
@@ -51,7 +51,7 @@ pub struct FileHeader {
 }
 
 /// A bounding box limited to X and Y axes. For axis definitions, see the BoundinxBoxZ struct.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct BoundingBox {
     /// The minimum latitude.
     pub x_min: f64,
@@ -65,7 +65,7 @@ pub struct BoundingBox {
 }
 
 /// A point with latitude and longitude on an XY plane.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Point {
     /// The latitude of the point.
     pub x: f64,
@@ -75,7 +75,7 @@ pub struct Point {
 }
 
 /// A generic range from a minimum to maximum value, over a type T.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Range<T> {
     pub minimum: T,
     pub maximum: T,
@@ -88,7 +88,7 @@ pub type MeasureRange = Range<f64>;
 pub type ZRange = Range<f64>;
 
 /// A point with latitude, longitude, and a measure.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PointM {
     /// The latitude
     pub x: f64,
@@ -100,7 +100,7 @@ pub struct PointM {
 }
 
 /// A point with latitude, longitude, altitude and an optional measure
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PointZ {
     /// The latitude
     pub x: f64,
@@ -115,7 +115,7 @@ pub struct PointZ {
 
 /// The type of a single patch (see MultiPatch shape type).
 /// Defined on page 20 of the spec.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum PatchType {
     /// Every vertex after the first two spans a triangle with its two predecessors.
     TriangleStrip,
@@ -132,7 +132,7 @@ pub enum PatchType {
 }
 
 /// A shape record defining a geometric feature in the SHP file.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Shape {
     /// The null shape: Empty info.
     NullShape,
@@ -254,7 +254,7 @@ pub enum Shape {
 }
 
 /// One of multiple geometric data records in a SHP file.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Record {
     /// The ID of the record (starting at 1)
     pub record_number: i32,
@@ -265,7 +265,7 @@ pub struct Record {
 }
 
 /// A SHP file.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ShpFile {
     /// The file header.
     pub header: FileHeader,
@@ -274,7 +274,7 @@ pub struct ShpFile {
 }
 
 /// An internal struct for interchanging shape data.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct ShapeBaseData {
     bounding_box: BoundingBox,
     num_parts: i32,
@@ -433,25 +433,29 @@ impl Shape {
     }
 
     /// Given the encoded ID of a patch type (see MultiPatch), returns the right enum variant for it.
-    fn get_patch_type_from_id(id: &i32) -> PatchType {
+    fn get_patch_type_from_id(id: &i32) -> Option<PatchType> {
         match *id {
             Shape::PTY_TRIANGLE_STRIP => {
-                PatchType::TriangleStrip
+                Some(PatchType::TriangleStrip)
             },
             Shape::PTY_TRIANGLE_FAN => {
-                PatchType::TriangleFan
+                Some(PatchType::TriangleFan)
             },
             Shape::PTY_INNER_RING => {
-                PatchType::InnerRing
+                Some(PatchType::InnerRing)
             },
             Shape::PTY_OUTER_RING => {
-                PatchType::OuterRing
+                Some(PatchType::OuterRing)
             },
             Shape::PTY_FIRST_RING => {
-                PatchType::FirstRing
+                Some(PatchType::FirstRing)
+            },
+            Shape::PTY_RING => {
+                Some(PatchType::Ring)
             },
             _ => {
-                PatchType::Ring
+                // Need to handle the default case somehow...
+                None
             },
         }
     }
@@ -544,8 +548,12 @@ impl Shape {
                     z_values: base.z,
                     measure_range: base.m_range,
                     measures: base.m}
-            }
+            },
+            Shape::STY_NULL_SHAPE => {
+                Shape::NullShape
+            },
             _ => {
+                // Probably a sane default
                 Shape::NullShape
             }
         }
@@ -587,7 +595,7 @@ impl Shape {
                 if shape_type == Shape::STY_MULTI_PATCH {
                     let patch_types_id = try!(Shape::parse_i32_array(file, base.num_parts as usize));
                     length += 4 * base.num_parts as usize;
-                    base.part_types = patch_types_id.iter().map(Shape::get_patch_type_from_id).collect();
+                    base.part_types = patch_types_id.iter().map(Shape::get_patch_type_from_id).map(Option::<PatchType>::unwrap).collect();
                 }
 
                 length += 16 * base.num_points as usize;
@@ -634,6 +642,7 @@ impl Shape {
 }
 
 impl Record {
+    /// Constructs a zero-initialized Record
     pub fn new() -> Record {
         Record {
             record_number: 0,
@@ -642,6 +651,7 @@ impl Record {
         }
     }
 
+    /// Reads a record from the binary input stream
     pub fn parse<T: Read>(file: &mut T) -> Result<(Record, usize), Error> {
         let mut result = Record::new();
         let mut read = 0usize;
@@ -663,6 +673,7 @@ impl Record {
 }
 
 impl BoundingBoxZ {
+    /// Creates a BoundingBoxZ with all zeros
     pub fn new() -> BoundingBoxZ {
         BoundingBoxZ {
             x_min: 0f64,
@@ -676,6 +687,7 @@ impl BoundingBoxZ {
         }
     }
 
+    /// Parses a BoundingBoxZ from the binary input stream
     pub fn parse<T: Read>(file: &mut T) -> Result<BoundingBoxZ, Error> {
         let mut result = BoundingBoxZ::new();
 
@@ -695,13 +707,17 @@ impl BoundingBoxZ {
 }
 
 impl FileHeader {
+    /// The magic number at the beginning of SHP files
     const SHP_MAGIC_NUMBER: i32 = 9994;
+    /// The supported version
     const SHP_VERSION: i32 = 1000;
 
+    /// Creates a new empty file header
     pub fn new() -> FileHeader {
         FileHeader {file_length: 0, shape_type: 0, bounding_box: BoundingBoxZ::new()}
     }
 
+    /// Reads a file header from the given input stream
     pub fn parse<T: Read + Seek>(file: &mut T) -> Result<FileHeader, Error> {
         // Confirm magic number - Big Endian
         if try!(file.read_i32::<BigEndian>()) != FileHeader::SHP_MAGIC_NUMBER {
@@ -742,19 +758,34 @@ impl FileHeader {
 }
 
 impl ShpFile {
-    /// Given a file name, parses the SHP file and returns the result.
-    pub fn parse(path: &str) -> Result<ShpFile, Error> {
+    pub fn parse_stream<T: Read + Seek>(input: &mut T) -> Result<ShpFile, Error> {
         let mut result = ShpFile {header: FileHeader::new(), records: vec![]};
+
+        // Try parsing the header
+        result.header = try!(FileHeader::parse(input));
+
+        // Keep track of our position in the file - now at 100, right after header
+        let mut consumed = 100usize;
+
+        // Now try parsing the records
+        while consumed < result.header.file_length as usize * 2 {
+            let (rec, length) = try!(Record::parse(input));
+            consumed += length;
+            result.records.push(rec);
+        }
+
+        Ok(result)
+    }
+
+    /// Given a file name, parses the SHP file and returns the result.
+    pub fn parse_file(path: &str) -> Result<ShpFile, Error> {
         let mut file = BufReader::new(try!(File::open(&Path::new(path))));
-        let length: usize;
 
         // Check file header is actually there before attempting any reads
         match file.get_ref().metadata() {
             Ok(m) => {
                 if m.len() < 100 {
                     return Err(Error::new(ErrorKind::Other, "SHP file has invalid size!"));
-                } else {
-                    length = m.len() as usize;
                 }
             },
             Err(e) => {
@@ -762,24 +793,6 @@ impl ShpFile {
             }
         }
 
-        // Try parsing the header
-        result.header = try!(FileHeader::parse(&mut file));
-
-        // Check if the sizes match
-        if result.header.file_length as usize * 2 != length {
-            return Err(Error::new(ErrorKind::Other, "SHP header indicates wrong length!"));
-        }
-
-        // Now try parsing the records
-        // Keep track of our position in the file - now at 100, right after header
-        let mut consumed = 100usize;
-
-        while consumed < result.header.file_length as usize * 2 {
-            let (rec, length) = try!(Record::parse(&mut file));
-            consumed += length;
-            result.records.push(rec);
-        }
-
-        return Ok(result);
+        return ShpFile::parse_stream(&mut file);
     }
 }
