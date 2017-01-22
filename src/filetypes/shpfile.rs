@@ -10,45 +10,8 @@ use std::io::{Error, ErrorKind, BufReader, Read, SeekFrom, Seek};
 use std::path::Path;
 use std::fs::File;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-
-/// A bounding box specifying minimum and maximum values on X, Y, Z and M axes.
-/// The x is for latitude, y is for longitude.
-/// The z is for altitude and optional.
-/// The m is a "measure" axis for scalar maps, and optional.
-#[derive(Debug, PartialEq)]
-pub struct BoundingBoxZ {
-    /// The minimum latitude.
-    pub x_min: f64,
-    /// The minimum longitude.
-    pub y_min: f64,
-
-    /// The maximum latitude.
-    pub x_max: f64,
-    /// The maximum longitude.
-    pub y_max: f64,
-
-    /// The minimum altitude.
-    pub z_min: f64,
-    /// The maximum altitude.
-    pub z_max: f64,
-
-    /// The minimum measure.
-    pub m_min: f64,
-    /// The maximum measure.
-    pub m_max: f64,
-}
-
-/// The header of a SHP file, as defined in the spec.
-#[derive(Debug, PartialEq)]
-pub struct FileHeader {
-    /// The length of the file in 16-bit words.
-    file_length: i32,
-    /// One of the shape type constants with STY_*. All shapes in the file must be of the specified
-    /// type, or of type 0.
-    pub shape_type: i32,
-    /// The bounding box of the data contained in the shape file.
-    pub bounding_box: BoundingBoxZ,
-}
+use super::{ShpFile, ShxFile, FileHeader, BoundingBoxZ};
+use super::shxfile;
 
 /// A bounding box limited to X and Y axes. For axis definitions, see the BoundinxBoxZ struct.
 #[derive(Debug, PartialEq)]
@@ -264,14 +227,6 @@ pub struct Record {
     pub shape: Shape,
 }
 
-/// A SHP file.
-#[derive(Debug, PartialEq)]
-pub struct ShpFile {
-    /// The file header.
-    pub header: FileHeader,
-    /// The records contained in the SHP file.
-    pub records: Vec<Record>,
-}
 
 /// An internal struct for interchanging shape data.
 #[derive(Debug, PartialEq)]
@@ -758,31 +713,21 @@ impl FileHeader {
 }
 
 impl ShpFile {
-    pub fn parse_stream<T: Read + Seek>(input: &mut T) -> Result<ShpFile, Error> {
-        let mut result = ShpFile {header: FileHeader::new(), records: vec![]};
+    pub fn parse_header(mut self) -> Result<ShpFile, Error> {
+        try!(self.file.seek(SeekFrom::Start(0)));
 
         // Try parsing the header
-        result.header = try!(FileHeader::parse(input));
+        self.header = try!(FileHeader::parse(&mut self.file));
 
-        // Keep track of our position in the file - now at 100, right after header
-        let mut consumed = 100usize;
-
-        // Now try parsing the records
-        while consumed < result.header.file_length as usize * 2 {
-            let (rec, length) = try!(Record::parse(input));
-            consumed += length;
-            result.records.push(rec);
-        }
-
-        Ok(result)
+        Ok(self)
     }
 
     /// Given a file name, parses the SHP file and returns the result.
-    pub fn parse_file(path: &str) -> Result<ShpFile, Error> {
-        let mut file = BufReader::new(try!(File::open(&Path::new(path))));
+    pub fn parse_file(path: &Path) -> Result<Self, Error> {
+        let result = ShpFile {file: BufReader::new(try!(File::open(path))), header: FileHeader::new()};
 
         // Check file header is actually there before attempting any reads
-        match file.get_ref().metadata() {
+        match result.file.get_ref().metadata() {
             Ok(m) => {
                 if m.len() < 100 {
                     return Err(Error::new(ErrorKind::Other, "SHP file has invalid size!"));
@@ -793,6 +738,164 @@ impl ShpFile {
             }
         }
 
-        return ShpFile::parse_stream(&mut file);
+        return result.parse_header();
+    }
+
+    pub fn record(&mut self, shx_file: &mut ShxFile, id: u64) -> Option<Record> {
+        let rec: shxfile::Record;
+        match shx_file.record(id) {
+            Some(r) => rec = r,
+            None => return None,
+        }
+
+        match self.file.seek(SeekFrom::Start(rec.offset as u64 * 2u64)) {
+            Ok(p) => {
+                if p != rec.offset as u64 * 2u64 {
+                    return None;
+                }
+            },
+            Err(_) => return None,
+        }
+
+        match Record::parse(&mut self.file) {
+            Ok((v,_)) => return Some(v),
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Shape;
+    use std::io::Cursor;
+    use byteorder::{LittleEndian, WriteBytesExt};
+
+    #[test]
+    fn test_parse_nullshape() {
+        let mut input: Vec<u8> = vec![];
+        let _ = input.write_i32::<LittleEndian>(0);
+        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
+        match shape {
+            Shape::NullShape => {},
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_point() {
+        let mut input: Vec<u8> = vec![];
+        let _ = input.write_i32::<LittleEndian>(1);
+        let _ = input.write_f64::<LittleEndian>(0.25f64);
+        let _ = input.write_f64::<LittleEndian>(0.5f64);
+        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
+        match shape {
+            Shape::Point {point: p} => {
+                if p.x != 0.25f64 || p.y != 0.5f64 {
+                    panic!()
+                }
+            },
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_multipoint() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type
+        let _ = input.write_i32::<LittleEndian>(8);
+        // Bounding Box
+        let _ = input.write_f64::<LittleEndian>(-0.25f64);
+        let _ = input.write_f64::<LittleEndian>(-0.125f64);
+        let _ = input.write_f64::<LittleEndian>(0.25f64);
+        let _ = input.write_f64::<LittleEndian>(0.125f64);
+        // Number of points
+        let _ = input.write_i32::<LittleEndian>(3);
+        // Three distinct points
+        let _ = input.write_f64::<LittleEndian>(1f64);
+        let _ = input.write_f64::<LittleEndian>(1f64);
+        let _ = input.write_f64::<LittleEndian>(2f64);
+        let _ = input.write_f64::<LittleEndian>(2f64);
+        let _ = input.write_f64::<LittleEndian>(5f64);
+        let _ = input.write_f64::<LittleEndian>(5f64);
+        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
+        match shape {
+            Shape::MultiPoint {bounding_box: b, points: p} => {
+                if b.x_min != -0.25f64 || b.y_min != -0.125f64 || b.x_max != 0.25f64 || b.y_max != 0.125f64 {
+                    panic!()
+                }
+                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64 || p[2].x != 5f64 || p[2].y != 5f64 {
+                    panic!()
+                }
+            },
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_parse_polygon_polyline() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type
+        let _ = input.write_i32::<LittleEndian>(3);
+        // Bounding Box
+        let _ = input.write_f64::<LittleEndian>(-0.25f64);
+        let _ = input.write_f64::<LittleEndian>(-0.125f64);
+        let _ = input.write_f64::<LittleEndian>(0.25f64);
+        let _ = input.write_f64::<LittleEndian>(0.125f64);
+        // Number of parts
+        let _ = input.write_i32::<LittleEndian>(2);
+        // Number of points
+        let _ = input.write_i32::<LittleEndian>(4);
+        // Two distinct parts
+        let _ = input.write_i32::<LittleEndian>(0);
+        let _ = input.write_i32::<LittleEndian>(2);
+        // Four distinct points
+        let _ = input.write_f64::<LittleEndian>(1f64);
+        let _ = input.write_f64::<LittleEndian>(1f64);
+        let _ = input.write_f64::<LittleEndian>(2f64);
+        let _ = input.write_f64::<LittleEndian>(2f64);
+        let _ = input.write_f64::<LittleEndian>(5f64);
+        let _ = input.write_f64::<LittleEndian>(5f64);
+        let _ = input.write_f64::<LittleEndian>(6f64);
+        let _ = input.write_f64::<LittleEndian>(6f64);
+
+        // Then see whether the data gets parsed correctly
+        let (polyline, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
+        match &polyline {
+            &Shape::PolyLine {bounding_box: ref b, parts: ref n, points: ref p} => {
+                if b.x_min != -0.25f64 || b.y_min != -0.125f64 || b.x_max != 0.25f64 || b.y_max != 0.125f64 {
+                    panic!()
+                }
+                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64 || p[2].x != 5f64 || p[2].y != 5f64 || p[3].x != 6f64 || p[3].y != 6f64 {
+                    panic!()
+                }
+                if n[0] != 0 || n[1] != 2 {
+                    panic!()
+                }
+            },
+            _ => panic!(),
+        }
+
+        // Put 5 as shape type instead of three (structure is the same)
+        let mut temp: Vec<u8> = vec![];
+        let _ = temp.write_i32::<LittleEndian>(5);
+        temp.extend_from_slice(&input[4..]);
+        let input = temp;
+
+        // Parse that and see whether the two are equal by fields
+        let (polygon, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
+
+        match polyline {
+            Shape::PolyLine {bounding_box: lb, parts: ln, points: lp} => {
+                match polygon {
+                    Shape::Polygon {bounding_box: gb, parts: gn, points: gp} => {
+                        if gb != lb || gn != ln || gp != lp {
+                            panic!()
+                        }
+                    },
+                    _ => panic!()
+                }
+            },
+            _ => panic!(),
+        }
     }
 }
