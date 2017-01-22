@@ -13,7 +13,7 @@ Currently, this crate is not on crates.io, since it is not yet considered stable
 Add this to one of your files:
 
 ```rust
-extern crate shapefile-utils;
+extern crate shapefile_utils;
 ```
 
 Then you can start using it. The first step is to insert some `use` clauses.
