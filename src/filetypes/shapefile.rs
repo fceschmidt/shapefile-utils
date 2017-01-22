@@ -39,7 +39,7 @@ impl Shapefile {
             None => return None,
         }
 
-        match self.dbf_file.record(id as u32) {
+        match self.dbf_file.record(id as u32 - 1) {
             Some(r) => result.metadata = r,
             None => return None,
         }
