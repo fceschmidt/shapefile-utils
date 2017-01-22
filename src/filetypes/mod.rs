@@ -102,6 +102,8 @@ pub struct Shapefile {
     shx_file: ShxFile,
     /// DBF file handle
     dbf_file: DbfFile,
+    /// Current ID for the iterator
+    id: u64,
 }
 
 

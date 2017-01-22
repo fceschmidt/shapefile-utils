@@ -77,13 +77,12 @@ impl ShxFile {
     ///
     /// This record contains the offset and the length of the SHP file entry in 16-bit words.
     pub fn record(&mut self, id: u64) -> Option<Record> {
-        let file_size = self.header.file_length as u64 * 2u64;
         let header_size = 100u64;
         let record_size = 8u64;
-        let record_count = (file_size - header_size) as u64 / record_size;
+        let record_count = self.num_records();
 
         // Check overflow
-        if id > record_count {
+        if id > record_count || id < 1 {
             return None;
         }
 
@@ -102,5 +101,14 @@ impl ShxFile {
             Ok(v) => return Some(v),
             Err(_) => return None,
         }
+    }
+
+    /// Gets the amount of records listed in the index file.
+    pub fn num_records(&self) -> u64 {
+        let file_size = self.header.file_length as u64 * 2u64;
+        let header_size = 100u64;
+        let record_size = 8u64;
+
+        (file_size - header_size) as u64 / record_size
     }
 }

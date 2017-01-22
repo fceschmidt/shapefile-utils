@@ -15,9 +15,9 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct Record {
     /// The shape as defined in the SHP file.
-    shape: Shape,
+    pub shape: Shape,
     /// The metadata as it comes from the DBF file.
-    metadata: HashMap<String, Field>
+    pub metadata: HashMap<String, Field>
 }
 
 impl Shapefile {
@@ -26,7 +26,8 @@ impl Shapefile {
         Ok(Shapefile {
             shp_file: try!(ShpFile::parse_file(shp_path)),
             shx_file: try!(ShxFile::parse_file(shx_path)),
-            dbf_file: try!(DbfFile::parse_file(dbf_path))
+            dbf_file: try!(DbfFile::parse_file(dbf_path)),
+            id: 1u64,
         })
     }
 
@@ -45,5 +46,21 @@ impl Shapefile {
         }
 
         Some(result)
+    }
+
+    /// The amount of records in the file.
+    pub fn num_records(&self) -> u64 {
+        self.shx_file.num_records()
+    }
+}
+
+impl Iterator for Shapefile {
+    type Item = Record;
+
+    fn next(&mut self) -> Option<Record> {
+        let id = self.id;
+        let result = self.record(id);
+        self.id += 1u64;
+        result
     }
 }
