@@ -5,16 +5,17 @@ extern crate dbf;
 
 pub mod filetypes;
 
-pub use filetypes::Shapefile as Shapefile;
+pub use filetypes::Shapefile;
+pub use filetypes::ShapefileRecordIterator;
 
 #[cfg(test)]
 mod tests {
-    use filetypes::Shapefile;
+    use super::Shapefile;
     use std::path::Path;
     use dbf;
 
     #[test]
-    fn test_shapefile() {
+    fn test_shapefile_direct_access() {
         let mut sf = Shapefile::new(&Path::new("assets/test.shp"), &Path::new("assets/test.shx"), &Path::new("assets/test.dbf")).unwrap();
 
         // Test some known value
@@ -42,6 +43,30 @@ mod tests {
 
         if let Some(_) = sf.record(0) {
             panic!()
+        }
+    }
+
+    #[test]
+    fn test_shapefile_record_iterator() {
+        let mut sf = Shapefile::new(&Path::new("assets/test.shp"), &Path::new("assets/test.shx"), &Path::new("assets/test.dbf")).unwrap();
+
+        let shape = sf.record(1u64).unwrap().shape;
+
+        for record in sf.iter() {
+            if record.shape != shape {
+                panic!()
+            } else {
+                break
+            }
+        }
+
+        // Play the same song again!
+        for record in sf.iter() {
+            if record.shape != shape {
+                panic!()
+            } else {
+                break
+            }
         }
     }
 }

@@ -36,7 +36,7 @@ let mut my_shapefile = Shapefile::new(
 Now you can iterate over the entries in the Shapefile, like so:
 
 ```rust
-for record in my_shapefile {
+for record in my_shapefile.iter() {
     println!("Something called {:?}", record.metadata.get(&String::from("name")).unwrap());
 }
 ```

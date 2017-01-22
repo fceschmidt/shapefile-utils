@@ -4,7 +4,7 @@
 //! This takes all the parts and puts them together.
 //!
 
-use super::{Shapefile, ShpFile, DbfFile, ShxFile};
+use super::{Shapefile, ShpFile, DbfFile, ShxFile, ShapefileRecordIterator};
 use super::shpfile::Shape;
 use std::collections::HashMap;
 use dbf::Field;
@@ -27,8 +27,11 @@ impl Shapefile {
             shp_file: try!(ShpFile::parse_file(shp_path)),
             shx_file: try!(ShxFile::parse_file(shx_path)),
             dbf_file: try!(DbfFile::parse_file(dbf_path)),
-            id: 1u64,
         })
+    }
+
+    pub fn iter<'a>(&'a mut self) -> ShapefileRecordIterator<'a> {
+        ShapefileRecordIterator {instance: self, id: 1u64}
     }
 
     /// Gives the data behind the record number
@@ -54,13 +57,20 @@ impl Shapefile {
     }
 }
 
-impl Iterator for Shapefile {
-    type Item = Record;
+pub mod recorditerator {
+    //! Module for the RecordItertor type.
 
-    fn next(&mut self) -> Option<Record> {
-        let id = self.id;
-        let result = self.record(id);
-        self.id += 1u64;
-        result
+    use super::super::ShapefileRecordIterator;
+    use std::iter::Iterator;
+
+    impl<'a> Iterator for ShapefileRecordIterator<'a> {
+        type Item = super::Record;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let id = self.id;
+            let result = self.instance.record(id);
+            self.id += 1u64;
+            result
+        }
     }
 }

@@ -102,6 +102,12 @@ pub struct Shapefile {
     shx_file: ShxFile,
     /// DBF file handle
     dbf_file: DbfFile,
+}
+
+/// An iterator over record-organized structures.
+pub struct ShapefileRecordIterator<'a> {
+    /// The reference to the instance
+    instance: &'a mut Shapefile,
     /// Current ID for the iterator
     id: u64,
 }
