@@ -6,12 +6,12 @@
 //! SHP files contain an arbitrary number of geometric data records. They are all of the same type.
 //!
 
+use std::fs::File;
 use std::io::{Error, ErrorKind, BufReader, Read, SeekFrom, Seek};
 use std::path::Path;
-use std::fs::File;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-use super::{ShpFile, ShxFile, FileHeader, BoundingBoxZ};
-use super::shxfile;
+
+use super::{ShpFile, ShxFile, FileHeader, BoundingBoxZ, shxfile};
 
 /// A bounding box limited to X and Y axes. For axis definitions, see the BoundinxBoxZ struct.
 #[derive(Debug, PartialEq)]
@@ -32,7 +32,6 @@ pub struct BoundingBox {
 pub struct Point {
     /// The latitude of the point.
     pub x: f64,
-
     /// The longitude of the point.
     pub y: f64,
 }
@@ -40,12 +39,12 @@ pub struct Point {
 /// A generic range from a minimum to maximum value, over a type T.
 #[derive(Debug, PartialEq)]
 pub struct Range<T> {
-    pub minimum: T,
-    pub maximum: T,
+    pub min: T,
+    pub max: T,
 }
 
 /// Minimum and maximum on the Measure axis.
-pub type MeasureRange = Range<f64>;
+pub type MRange = Range<f64>;
 
 /// Minimum and maximum on the altitude axis.
 pub type ZRange = Range<f64>;
@@ -59,7 +58,7 @@ pub struct PointM {
     pub y: f64,
 
     /// The associated scalar measure
-    pub measure: f64,
+    pub m: f64,
 }
 
 /// A point with latitude, longitude, altitude and an optional measure
@@ -73,7 +72,7 @@ pub struct PointZ {
     pub z: f64,
 
     /// The associated scalar measure
-    pub measure: f64,
+    pub m: f64,
 }
 
 /// The type of a single patch (see MultiPatch shape type).
@@ -144,9 +143,9 @@ pub enum Shape {
         parts: Vec<i32>,
         points: Vec<Point>,
         z_range: ZRange,
-        z_values: Vec<f64>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        z: Vec<f64>,
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// See Polygon. Has additional altitude and measure coordinates.
@@ -155,9 +154,9 @@ pub enum Shape {
         parts: Vec<i32>,
         points: Vec<Point>,
         z_range: ZRange,
-        z_values: Vec<f64>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        z: Vec<f64>,
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// See MultiPoint. Has additional altitude and measure coordinates.
@@ -165,9 +164,9 @@ pub enum Shape {
         bounding_box: BoundingBox,
         points: Vec<Point>,
         z_range: ZRange,
-        z_values: Vec<f64>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        z: Vec<f64>,
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// See Point. Has an additional measure coordinate.
@@ -180,8 +179,8 @@ pub enum Shape {
         bounding_box: BoundingBox,
         parts: Vec<i32>,
         points: Vec<Point>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// See Polygon. Has additional measure coordinates.
@@ -189,16 +188,16 @@ pub enum Shape {
         bounding_box: BoundingBox,
         parts: Vec<i32>,
         points: Vec<Point>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// See MultiPoint. Has additional measure coordinates.
     MultiPointM {
         bounding_box: BoundingBox,
         points: Vec<Point>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        m_range: MRange,
+        m: Vec<f64>
     },
 
     /// A MultiPatch consists of a number of surface patches. Each surface patch describes a surface.
@@ -210,9 +209,9 @@ pub enum Shape {
         part_types: Vec<PatchType>,
         points: Vec<Point>,
         z_range: ZRange,
-        z_values: Vec<f64>,
-        measure_range: MeasureRange,
-        measures: Vec<f64>
+        z: Vec<f64>,
+        m_range: MRange,
+        m: Vec<f64>
     },
 }
 
@@ -252,9 +251,9 @@ impl ShapeBaseData {
             parts: vec![],
             part_types: vec![],
             points: vec![],
-            z_range: Range::<f64> {minimum: 0f64, maximum: 0f64},
+            z_range: Range::<f64> {min: 0f64, max: 0f64},
             z: vec![],
-            m_range: Range::<f64> {minimum: 0f64, maximum: 0f64},
+            m_range: Range::<f64> {min: 0f64, max: 0f64},
             m: vec![],
         }
     }
@@ -262,7 +261,7 @@ impl ShapeBaseData {
 
 impl BoundingBox {
     /// Returns a bounding box initialized to all zeroes.
-    pub fn new() -> BoundingBox {
+    pub fn new() -> Self {
         BoundingBox {
             x_min: 0f64,
             y_min: 0f64,
@@ -272,8 +271,8 @@ impl BoundingBox {
     }
 
     /// Parses a bounding box by consuming four doubles from the input stream.
-    pub fn parse<T: Read>(file: &mut T) -> Result<BoundingBox, Error> {
-        let mut result = BoundingBox::new();
+    pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
+        let mut result = Self::new();
 
         result.x_min = try!(file.read_f64::<LittleEndian>());
         result.y_min = try!(file.read_f64::<LittleEndian>());
@@ -286,13 +285,13 @@ impl BoundingBox {
 
 impl Point {
     /// Returns a point initialized to (0,0)
-    pub fn new() -> Point {
+    pub fn new() -> Self {
         Point {x: 0f64, y: 0f64}
     }
 
     /// Parses a file by reading two f64s in little-endian format from the input stream.
-    pub fn parse<T: Read>(file: &mut T) -> Result<Point, Error> {
-        let mut result = Point::new();
+    pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
+        let mut result = Self::new();
 
         result.x = try!(file.read_f64::<LittleEndian>());
         result.y = try!(file.read_f64::<LittleEndian>());
@@ -327,61 +326,54 @@ impl Shape {
     const PTY_RING: i32 = 5;
 
     /// Returns a NullShape variant
-    pub fn new() -> Shape {
+    pub fn new() -> Self {
         Shape::NullShape
     }
 
-    /// Consumes an array of num i32's from the input stream and returns them in a Vec.
-    fn parse_i32_array<T: Read>(file: &mut T, num: usize) -> Result<Vec<i32>,Error> {
-        let mut result: Vec<i32> = vec![];
-        for _ in 0..num {
-            result.push(try!(file.read_i32::<LittleEndian>()));
+    /// Consumes an array of num Ts from the input stream and returns them in a Vec.
+    fn parse_array<R: Read, V, F>(file: &mut R, n: usize, mut f: F) -> Result<Vec<V>, Error>
+    where F: FnMut(&mut R) -> Result<V, Error>
+    {
+        let mut result: Vec<V> = vec![];
+        for _ in 0..n {
+            result.push(try!(f(file)));
         }
         Ok(result)
+    }
+
+    /// Consumes an array of num i32's from the input stream and returns them in a Vec.
+    fn parse_i32_array<T: Read>(file: &mut T, n: usize) -> Result<Vec<i32>,Error> {
+        Self::parse_array(file, n, ReadBytesExt::read_i32::<LittleEndian>)
     }
 
     /// Consumes an array of num points from the input stream and returns them in a Vec.
-    fn parse_point_array<T: Read>(file: &mut T, num: usize) -> Result<Vec<Point>,Error> {
-        let mut result: Vec<Point> = vec![];
-        for _ in 0..num {
-            result.push(try!(Point::parse(file)));
-        }
-        Ok(result)
+    fn parse_point_array<T: Read>(file: &mut T, n: usize) -> Result<Vec<Point>,Error> {
+        Self::parse_array(file, n, Point::parse)
     }
 
     /// Consumes an array of num f64's from the input stream and returns them in a Vec.
-    fn parse_f64_array<T: Read>(file: &mut T, num: usize) -> Result<Vec<f64>,Error> {
-        let mut result: Vec<f64> = vec![];
-        for _ in 0..num {
-            result.push(try!(file.read_f64::<LittleEndian>()));
-        }
-        Ok(result)
+    fn parse_f64_array<T: Read>(file: &mut T, n: usize) -> Result<Vec<f64>,Error> {
+        Self::parse_array(file, n, ReadBytesExt::read_f64::<LittleEndian>)
     }
 
     /// Gets called internally for parsing a point.
-    fn parse_point_type<T: Read>(file: &mut T, shape_type: i32) -> Result<(Shape, usize), Error> {
+    fn parse_point_type<T: Read>(file: &mut T, shape_type: i32) -> Result<(Self, usize), Error> {
         match shape_type {
             // Points come first
-            Shape::STY_POINT => {
+            Self::STY_POINT => {
                 // X and Y, both double and little endian
-                let x = try!(file.read_f64::<LittleEndian>());
-                let y = try!(file.read_f64::<LittleEndian>());
-                Ok((Shape::Point {point: Point{x: x, y: y}}, 16))
+                let v = try!(Self::parse_f64_array(file, 2));
+                Ok((Shape::Point {point: Point{x: v[0], y: v[1]}}, 16))
             },
-            Shape::STY_POINT_M => {
+            Self::STY_POINT_M => {
                 // X and Y, both double and little endian
-                let x = try!(file.read_f64::<LittleEndian>());
-                let y = try!(file.read_f64::<LittleEndian>());
-                let m = try!(file.read_f64::<LittleEndian>());
-                Ok((Shape::PointM {point: PointM{x: x, y: y, measure: m}}, 24))
+                let v = try!(Self::parse_f64_array(file, 3));
+                Ok((Shape::PointM {point: PointM{x: v[0], y: v[1], m: v[2]}}, 24))
             },
-            Shape::STY_POINT_Z => {
+            Self::STY_POINT_Z => {
                 // X and Y, both double and little endian
-                let x = try!(file.read_f64::<LittleEndian>());
-                let y = try!(file.read_f64::<LittleEndian>());
-                let z = try!(file.read_f64::<LittleEndian>());
-                let m = try!(file.read_f64::<LittleEndian>());
-                Ok((Shape::PointZ {point: PointZ{x: x, y: y, measure: m, z: z}}, 32))
+                let v = try!(Self::parse_f64_array(file, 3));
+                Ok((Shape::PointZ {point: PointZ{x: v[0], y: v[1], m: v[2], z: v[3]}}, 32))
             },
             _ => Err(Error::new(ErrorKind::Other, "Supposed point not of any point type!")),
         }
@@ -390,22 +382,22 @@ impl Shape {
     /// Given the encoded ID of a patch type (see MultiPatch), returns the right enum variant for it.
     fn get_patch_type_from_id(id: &i32) -> Option<PatchType> {
         match *id {
-            Shape::PTY_TRIANGLE_STRIP => {
+            Self::PTY_TRIANGLE_STRIP => {
                 Some(PatchType::TriangleStrip)
             },
-            Shape::PTY_TRIANGLE_FAN => {
+            Self::PTY_TRIANGLE_FAN => {
                 Some(PatchType::TriangleFan)
             },
-            Shape::PTY_INNER_RING => {
+            Self::PTY_INNER_RING => {
                 Some(PatchType::InnerRing)
             },
-            Shape::PTY_OUTER_RING => {
+            Self::PTY_OUTER_RING => {
                 Some(PatchType::OuterRing)
             },
-            Shape::PTY_FIRST_RING => {
+            Self::PTY_FIRST_RING => {
                 Some(PatchType::FirstRing)
             },
-            Shape::PTY_RING => {
+            Self::PTY_RING => {
                 Some(PatchType::Ring)
             },
             _ => {
@@ -417,94 +409,93 @@ impl Shape {
 
     /// Consumes two f64 values and an array of f64 values with num entries, and returns a Range
     /// and a Vec object from the data.
-    fn parse_f64_range_and_array<T: Read>(file: &mut T, num: usize) -> Result<(Range<f64>, Vec<f64>), Error> {
-        let min = try!(file.read_f64::<LittleEndian>());
-        let max = try!(file.read_f64::<LittleEndian>());
-        let range = Range::<f64> {minimum: min, maximum: max};
-        let arr = try!(Shape::parse_f64_array(file, num));
+    fn parse_f64_range_and_array<T: Read>(file: &mut T, n: usize) -> Result<(Range<f64>, Vec<f64>), Error> {
+        let v = try!(Self::parse_f64_array(file, 2));
+        let range = Range::<f64> {min: v[0], max: v[1]};
+        let arr = try!(Self::parse_f64_array(file, n));
         Ok((range, arr))
     }
 
     /// Given a Shape type ID and the parsed base data, we can already construct a valid shape
     /// object.
-    fn shape_from_base_data(shape_type: i32, base: ShapeBaseData) -> Shape {
+    fn shape_from_base_data(shape_type: i32, base: ShapeBaseData) -> Self {
         match shape_type {
             // The poly lines
-            Shape::STY_POLY_LINE => {
+            Self::STY_POLY_LINE => {
                 Shape::PolyLine {bounding_box: base.bounding_box, parts: base.parts, points: base.points}
             },
-            Shape::STY_POLY_LINE_M => {
+            Self::STY_POLY_LINE_M => {
                 Shape::PolyLineM {
                     bounding_box: base.bounding_box,
                     parts: base.parts,
                     points: base.points,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    m_range: base.m_range,
+                    m: base.m}
             },
-            Shape::STY_POLY_LINE_Z => {
+            Self::STY_POLY_LINE_Z => {
                 Shape::PolyLineZ {
                     bounding_box: base.bounding_box,
                     parts: base.parts,
                     points: base.points,
-                    z_values: base.z,
+                    z: base.z,
                     z_range: base.z_range,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    m_range: base.m_range,
+                    m: base.m}
             },
             // The polygons
-            Shape::STY_POLYGON => {
+            Self::STY_POLYGON => {
                 Shape::Polygon {bounding_box: base.bounding_box, parts: base.parts, points: base.points}
             },
-            Shape::STY_POLYGON_M => {
+            Self::STY_POLYGON_M => {
                 Shape::PolygonM {
                     bounding_box: base.bounding_box,
                     parts: base.parts,
                     points: base.points,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    m_range: base.m_range,
+                    m: base.m}
             },
-            Shape::STY_POLYGON_Z => {
+            Self::STY_POLYGON_Z => {
                 Shape::PolygonZ {
                     bounding_box: base.bounding_box,
                     parts: base.parts,
                     points: base.points,
                     z_range: base.z_range,
-                    z_values: base.z,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    z: base.z,
+                    m_range: base.m_range,
+                    m: base.m}
             },
             // Then the multipoints
-            Shape::STY_MULTI_POINT => {
+            Self::STY_MULTI_POINT => {
                 Shape::MultiPoint {bounding_box: base.bounding_box, points: base.points}
             },
-            Shape::STY_MULTI_POINT_M => {
+            Self::STY_MULTI_POINT_M => {
                 Shape::MultiPointM {
                     bounding_box: base.bounding_box,
                     points: base.points,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    m_range: base.m_range,
+                    m: base.m}
             },
-            Shape::STY_MULTI_POINT_Z => {
+            Self::STY_MULTI_POINT_Z => {
                 Shape::MultiPointZ {
                     bounding_box: base.bounding_box,
                     points: base.points,
                     z_range: base.z_range,
-                    z_values: base.z,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    z: base.z,
+                    m_range: base.m_range,
+                    m: base.m}
             },
-            Shape::STY_MULTI_PATCH => {
+            Self::STY_MULTI_PATCH => {
                 Shape::MultiPatch {
                     bounding_box: base.bounding_box,
                     parts: base.parts,
                     part_types: base.part_types,
                     points: base.points,
                     z_range: base.z_range,
-                    z_values: base.z,
-                    measure_range: base.m_range,
-                    measures: base.m}
+                    z: base.z,
+                    m_range: base.m_range,
+                    m: base.m}
             },
-            Shape::STY_NULL_SHAPE => {
+            Self::STY_NULL_SHAPE => {
                 Shape::NullShape
             },
             _ => {
@@ -515,16 +506,16 @@ impl Shape {
     }
 
     /// Parses a shape from the input stream.
-    pub fn parse<T: Read>(file: &mut T) -> Result<(Shape, usize), Error> {
+    pub fn parse<T: Read>(file: &mut T) -> Result<(Self, usize), Error> {
         let shape_type = try!(file.read_i32::<LittleEndian>());
         let mut length = 4usize;
 
         // Get the points out of here, they're too special
         match shape_type {
-            Shape::STY_POINT
-            | Shape::STY_POINT_M
-            | Shape::STY_POINT_Z => {
-                return Shape::parse_point_type(file, shape_type);
+            Self::STY_POINT
+            | Self::STY_POINT_M
+            | Self::STY_POINT_Z => {
+                return Self::parse_point_type(file, shape_type);
             },
             _ => (),
         }
@@ -533,58 +524,60 @@ impl Shape {
         let mut base: ShapeBaseData = ShapeBaseData::new();
 
         match shape_type {
-            Shape::STY_POLY_LINE
-            | Shape::STY_POLYGON
-            | Shape::STY_POLY_LINE_M
-            | Shape::STY_POLYGON_M
-            | Shape::STY_POLY_LINE_Z
-            | Shape::STY_POLYGON_Z
-            | Shape::STY_MULTI_PATCH => {
+            Self::STY_POLY_LINE
+            | Self::STY_POLYGON
+            | Self::STY_POLY_LINE_M
+            | Self::STY_POLYGON_M
+            | Self::STY_POLY_LINE_Z
+            | Self::STY_POLYGON_Z
+            | Self::STY_MULTI_PATCH => {
                 length += 40usize;
                 base.bounding_box = try!(BoundingBox::parse(file));
                 base.num_parts = try!(file.read_i32::<LittleEndian>());
                 base.num_points = try!(file.read_i32::<LittleEndian>());
                 length += 4 * base.num_parts as usize;
-                base.parts = try!(Shape::parse_i32_array(file, base.num_parts as usize));
+                base.parts = try!(Self::parse_i32_array(file, base.num_parts as usize));
 
-                if shape_type == Shape::STY_MULTI_PATCH {
-                    let patch_types_id = try!(Shape::parse_i32_array(file, base.num_parts as usize));
+                if shape_type == Self::STY_MULTI_PATCH {
+                    let part_types_id = try!(Self::parse_i32_array(file, base.num_parts as usize));
                     length += 4 * base.num_parts as usize;
-                    base.part_types = patch_types_id.iter().map(Shape::get_patch_type_from_id).map(Option::<PatchType>::unwrap).collect();
+                    base.part_types = part_types_id.iter()
+                                                   .map(|x| Self::get_patch_type_from_id(x).unwrap())
+                                                   .collect();
                 }
 
                 length += 16 * base.num_points as usize;
-                base.points = try!(Shape::parse_point_array(file, base.num_points as usize));
+                base.points = try!(Self::parse_point_array(file, base.num_points as usize));
             },
-            Shape::STY_MULTI_POINT
-            | Shape::STY_MULTI_POINT_M
-            | Shape::STY_MULTI_POINT_Z => {
+            Self::STY_MULTI_POINT
+            | Self::STY_MULTI_POINT_M
+            | Self::STY_MULTI_POINT_Z => {
                 length += 36usize;
                 base.bounding_box = try!(BoundingBox::parse(file));
                 base.num_points = try!(file.read_i32::<LittleEndian>());
                 length += 16 * base.num_points as usize;
-                base.points = try!(Shape::parse_point_array(file, base.num_points as usize));
+                base.points = try!(Self::parse_point_array(file, base.num_points as usize));
             },
             _ => ()
         };
 
         match shape_type {
-            Shape::STY_POLY_LINE_Z
-            | Shape::STY_POLYGON_Z
-            | Shape::STY_MULTI_POINT_Z
-            | Shape::STY_MULTI_PATCH => {
-                let (z_range, z) = try!(Shape::parse_f64_range_and_array(file, base.num_points as usize));
-                let (m_range, m) = try!(Shape::parse_f64_range_and_array(file, base.num_points as usize));
+            Self::STY_POLY_LINE_Z
+            | Self::STY_POLYGON_Z
+            | Self::STY_MULTI_POINT_Z
+            | Self::STY_MULTI_PATCH => {
+                let (z_range, z) = try!(Self::parse_f64_range_and_array(file, base.num_points as usize));
+                let (m_range, m) = try!(Self::parse_f64_range_and_array(file, base.num_points as usize));
                 base.z_range = z_range;
                 base.z = z;
                 base.m_range = m_range;
                 base.m = m;
                 length += 32usize + 16 * base.num_points as usize;
             },
-            Shape::STY_POLY_LINE_M
-            | Shape::STY_POLYGON_M
-            | Shape::STY_MULTI_POINT_M => {
-                let (m_range, m) = try!(Shape::parse_f64_range_and_array(file, base.num_points as usize));
+            Self::STY_POLY_LINE_M
+            | Self::STY_POLYGON_M
+            | Self::STY_MULTI_POINT_M => {
+                let (m_range, m) = try!(Self::parse_f64_range_and_array(file, base.num_points as usize));
                 base.m_range = m_range;
                 base.m = m;
                 length += 16usize + 8 * base.num_points as usize;
@@ -592,7 +585,7 @@ impl Shape {
             _ => ()
         }
 
-        Ok((Shape::shape_from_base_data(shape_type, base), length))
+        Ok((Self::shape_from_base_data(shape_type, base), length))
     }
 }
 
@@ -629,7 +622,7 @@ impl Record {
 
 impl BoundingBoxZ {
     /// Creates a BoundingBoxZ with all zeros
-    pub fn new() -> BoundingBoxZ {
+    pub fn new() -> Self {
         BoundingBoxZ {
             x_min: 0f64,
             y_min: 0f64,
@@ -643,8 +636,8 @@ impl BoundingBoxZ {
     }
 
     /// Parses a BoundingBoxZ from the binary input stream
-    pub fn parse<T: Read>(file: &mut T) -> Result<BoundingBoxZ, Error> {
-        let mut result = BoundingBoxZ::new();
+    pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
+        let mut result = Self::new();
 
         // As per the spec, read all the fields sequentially as f64s in little endian
         result.x_min = try!(file.read_f64::<LittleEndian>());
@@ -668,18 +661,18 @@ impl FileHeader {
     const SHP_VERSION: i32 = 1000;
 
     /// Creates a new empty file header
-    pub fn new() -> FileHeader {
+    pub fn new() -> Self {
         FileHeader {file_length: 0, shape_type: 0, bounding_box: BoundingBoxZ::new()}
     }
 
     /// Reads a file header from the given input stream
-    pub fn parse<T: Read + Seek>(file: &mut T) -> Result<FileHeader, Error> {
+    pub fn parse<T: Read + Seek>(file: &mut T) -> Result<Self, Error> {
         // Confirm magic number - Big Endian
-        if try!(file.read_i32::<BigEndian>()) != FileHeader::SHP_MAGIC_NUMBER {
+        if try!(file.read_i32::<BigEndian>()) != Self::SHP_MAGIC_NUMBER {
             return Err(Error::new(ErrorKind::Other, "SHP header magic number mismatch!"));
         }
 
-        let mut result = FileHeader::new();
+        let mut result = Self::new();
 
         // Take 20 bytes away, since they are unused according to the spec.
         match file.seek(SeekFrom::Current(20)) {
@@ -697,7 +690,7 @@ impl FileHeader {
         result.file_length = try!(file.read_i32::<BigEndian>());
 
         // Read version - Little Endian
-        if try!(file.read_i32::<LittleEndian>()) != FileHeader::SHP_VERSION {
+        if try!(file.read_i32::<LittleEndian>()) != Self::SHP_VERSION {
             return Err(Error::new(ErrorKind::Other, "SHP header version mismatch!"));
         }
 
@@ -713,7 +706,7 @@ impl FileHeader {
 }
 
 impl ShpFile {
-    pub fn parse_header(mut self) -> Result<ShpFile, Error> {
+    pub fn parse_header(mut self) -> Result<Self, Error> {
         try!(self.file.seek(SeekFrom::Start(0)));
 
         // Try parsing the header
@@ -724,7 +717,10 @@ impl ShpFile {
 
     /// Given a file name, parses the SHP file and returns the result.
     pub fn parse_file(path: &Path) -> Result<Self, Error> {
-        let result = ShpFile {file: BufReader::new(try!(File::open(path))), header: FileHeader::new()};
+        let result = ShpFile {
+            file: BufReader::new(try!(File::open(path))),
+            header: FileHeader::new()
+        };
 
         // Check file header is actually there before attempting any reads
         match result.file.get_ref().metadata() {
@@ -862,10 +858,12 @@ mod tests {
         let (polyline, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
         match &polyline {
             &Shape::PolyLine {bounding_box: ref b, parts: ref n, points: ref p} => {
-                if b.x_min != -0.25f64 || b.y_min != -0.125f64 || b.x_max != 0.25f64 || b.y_max != 0.125f64 {
+                if b.x_min != -0.25f64 || b.y_min != -0.125f64
+                || b.x_max !=  0.25f64 || b.y_max !=  0.125f64 {
                     panic!()
                 }
-                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64 || p[2].x != 5f64 || p[2].y != 5f64 || p[3].x != 6f64 || p[3].y != 6f64 {
+                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64
+                || p[2].x != 5f64 || p[2].y != 5f64 || p[3].x != 6f64 || p[3].y != 6f64 {
                     panic!()
                 }
                 if n[0] != 0 || n[1] != 2 {
@@ -884,18 +882,16 @@ mod tests {
         // Parse that and see whether the two are equal by fields
         let (polygon, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
 
-        match polyline {
-            Shape::PolyLine {bounding_box: lb, parts: ln, points: lp} => {
-                match polygon {
-                    Shape::Polygon {bounding_box: gb, parts: gn, points: gp} => {
-                        if gb != lb || gn != ln || gp != lp {
-                            panic!()
-                        }
-                    },
-                    _ => panic!()
+        if let Shape::PolyLine {bounding_box: lb, parts: ln, points: lp} = polyline  {
+            if let Shape::Polygon {bounding_box: gb, parts: gn, points: gp} = polygon {
+                if gb != lb || gn != ln || gp != lp {
+                    panic!()
                 }
-            },
-            _ => panic!(),
+            } else {
+                panic!()
+            }
+        } else {
+            panic!()
         }
     }
 }
