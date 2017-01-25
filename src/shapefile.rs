@@ -4,12 +4,15 @@
 //! This takes all the parts and puts them together.
 //!
 
-use super::{Shapefile, ShpFile, DbfFile, ShxFile, ShapefileRecordIterator};
-use super::shpfile::Shape;
 use std::collections::HashMap;
-use dbf::Field;
 use std::io::Error;
+use std::iter::Iterator;
 use std::path::Path;
+
+use dbf::Field;
+
+use super::{Shapefile, ShpFile, DbfFile, ShxFile, ShapefileRecordIterator};
+use super::shape::Shape;
 
 /// Represents a record in the shapefile - has shape and metadata.
 #[derive(Debug)]
@@ -30,6 +33,8 @@ impl Shapefile {
         })
     }
 
+    /// Constructs a `ShapefileRecordIterator` that can be used to iterate over the records inside
+    /// the Shapefile.
     pub fn iter<'a>(&'a mut self) -> ShapefileRecordIterator<'a> {
         ShapefileRecordIterator {instance: self, id: 1u64}
     }
@@ -57,20 +62,13 @@ impl Shapefile {
     }
 }
 
-pub mod recorditerator {
-    //! Module for the RecordItertor type.
+impl<'a> Iterator for ShapefileRecordIterator<'a> {
+    type Item = Record;
 
-    use super::super::ShapefileRecordIterator;
-    use std::iter::Iterator;
-
-    impl<'a> Iterator for ShapefileRecordIterator<'a> {
-        type Item = super::Record;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            let id = self.id;
-            let result = self.instance.record(id);
-            self.id += 1u64;
-            result
-        }
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.id;
+        let result = self.instance.record(id);
+        self.id += 1u64;
+        result
     }
 }

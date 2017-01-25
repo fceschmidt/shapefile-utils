@@ -7,21 +7,12 @@ use std::io::{Error, ErrorKind, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::fs::File;
 use byteorder::{BigEndian, ReadBytesExt};
-use super::{FileHeader, ShxFile};
+use super::{FileHeader, ShxFile, ShxRecord};
 
-/// An index record.
-#[derive(Debug)]
-pub struct Record {
-    /// Offset of the SHP file record measured in 16-bit words
-    pub offset: i32,
-    /// Length of the SHP file record measured in 16-bit words
-    pub length: i32,
-}
-
-impl Record {
+impl ShxRecord {
     /// Constructs a zero-initialized Record
-    pub fn new() -> Record {
-        Record {
+    pub fn new() -> Self {
+        ShxRecord {
             offset: 0,
             length: 0,
         }
@@ -29,8 +20,8 @@ impl Record {
 
     /// Reads a record from the binary input stream
     /// Consumes 8 bytes from the stream.
-    pub fn parse<T: Read>(file: &mut T) -> Result<Record, Error> {
-        let mut result = Record::new();
+    pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
+        let mut result = Self::new();
 
         // Read the header fields -- First: offset, Big Endian
         result.offset = try!(file.read_i32::<BigEndian>());
@@ -76,7 +67,7 @@ impl ShxFile {
     /// Returns a record with the given ID.
     ///
     /// This record contains the offset and the length of the SHP file entry in 16-bit words.
-    pub fn record(&mut self, id: u64) -> Option<Record> {
+    pub fn record(&mut self, id: u64) -> Option<ShxRecord> {
         let header_size = 100u64;
         let record_size = 8u64;
         let record_count = self.num_records();
@@ -97,7 +88,7 @@ impl ShxFile {
             Err(_) => return None,
         }
 
-        match Record::parse(&mut self.file) {
+        match ShxRecord::parse(&mut self.file) {
             Ok(v) => return Some(v),
             Err(_) => return None,
         }
