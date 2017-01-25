@@ -358,14 +358,14 @@ impl Shape {
                 Ok((Shape::Point {point: Point{x: v[0], y: v[1]}}, 16))
             },
             Self::STY_POINT_M => {
-                // X and Y, both double and little endian
+                // X, Y and M, both double and little endian
                 let v = try!(Self::parse_f64_array(file, 3));
                 Ok((Shape::PointM {point: PointM{x: v[0], y: v[1], m: v[2]}}, 24))
             },
             Self::STY_POINT_Z => {
-                // X and Y, both double and little endian
-                let v = try!(Self::parse_f64_array(file, 3));
-                Ok((Shape::PointZ {point: PointZ{x: v[0], y: v[1], m: v[2], z: v[3]}}, 32))
+                // X, Y, M and Z, both double and little endian
+                let v = try!(Self::parse_f64_array(file, 4));
+                Ok((Shape::PointZ {point: PointZ{x: v[0], y: v[1], z: v[2], m: v[3]}}, 32))
             },
             _ => Err(Error::new(ErrorKind::Other, "Supposed point not of any point type!")),
         }
