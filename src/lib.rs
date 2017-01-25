@@ -23,6 +23,24 @@
 //! inside the respective submodules.
 //!
 //! This crate needs a nightly version of Rust, because of the `associated_consts` feature.
+//!
+//! # Example
+//!
+//! Of course, don't forget `extern crate shapefile_utils;` and the `use` clause!
+//!
+//! ```
+//! use std::path::Path;
+//!
+//! let mut my_shapefile = shapefile_utils::Shapefile::new(
+//!     &Path::new("assets/test.shp"),
+//!     &Path::new("assets/test.shx"),
+//!     &Path::new("assets/test.dbf")).unwrap();
+//!
+//! for record in my_shapefile.iter() {
+//!     println!("Something called {:?}", record.metadata.get(&String::from("name")).unwrap());
+//!     break;
+//! }
+//! ```
 
 #![feature(associated_consts)]
 
