@@ -6,7 +6,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use super::BoundingBoxZ;
 
 /// A bounding box limited to X and Y axes. For axis definitions, see the BoundinxBoxZ struct.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct BoundingBox {
     /// The minimum latitude.
     pub x_min: f64,
@@ -20,7 +20,7 @@ pub struct BoundingBox {
 }
 
 /// A point with latitude and longitude on an XY plane.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Point {
     /// The latitude of the point.
     pub x: f64,
@@ -323,12 +323,12 @@ impl Shape {
     }
 
     /// Consumes an array of num Ts from the input stream and returns them in a Vec.
-    fn parse_array<R: Read, V, F>(file: &mut R, n: usize, mut f: F) -> Result<Vec<V>, Error>
+    fn parse_array<R: Read, V, F>(file: &mut R, n: usize, mut read_function: F) -> Result<Vec<V>, Error>
     where F: FnMut(&mut R) -> Result<V, Error>
     {
         let mut result: Vec<V> = vec![];
         for _ in 0..n {
-            result.push(try!(f(file)));
+            result.push(try!(read_function(file)));
         }
         Ok(result)
     }
@@ -618,18 +618,49 @@ impl BoundingBoxZ {
 
 #[cfg(test)]
 mod tests {
-    use super::Shape;
+    use super::{Shape, BoundingBox, Point, PatchType};
     use std::io::Cursor;
     use byteorder::{LittleEndian, WriteBytesExt};
+
+    fn write_vec<T, F>(vec: &Vec<T>, mut w_func: F, buffer: &mut Vec<u8>)
+    where F: FnMut(&mut Vec<u8>, &T) -> ()
+    {
+        for elem in vec {
+            w_func(buffer, elem);
+        }
+    }
+
+    fn write_box(bounding_box: &BoundingBox, buffer: &mut Vec<u8>) {
+        let _ = buffer.write_f64::<LittleEndian>(bounding_box.x_min);
+        let _ = buffer.write_f64::<LittleEndian>(bounding_box.y_min);
+        let _ = buffer.write_f64::<LittleEndian>(bounding_box.x_max);
+        let _ = buffer.write_f64::<LittleEndian>(bounding_box.y_max);
+    }
+
+    fn write_point_vec(points: &Vec<Point>, buffer: &mut Vec<u8>) {
+        write_vec(points, |w, elem| {
+            let _ = w.write_f64::<LittleEndian>(elem.x);
+            let _ = w.write_f64::<LittleEndian>(elem.y);
+        }, buffer);
+    }
+
+    fn write_i32_vec(input: &Vec<i32>, buffer: &mut Vec<u8>) {
+        write_vec(input, |w, elem| w.write_i32::<LittleEndian>(*elem).unwrap(), buffer);
+    }
+
+    fn write_f64_vec(input: &Vec<f64>, buffer: &mut Vec<u8>) {
+        write_vec(input, |w, elem| w.write_f64::<LittleEndian>(*elem).unwrap(), buffer);
+    }
 
     #[test]
     fn test_parse_nullshape() {
         let mut input: Vec<u8> = vec![];
         let _ = input.write_i32::<LittleEndian>(0);
-        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
-        match shape {
-            Shape::NullShape => {},
-            _ => panic!(),
+
+        if let (Shape::NullShape, 4) = Shape::parse(&mut Cursor::new(input)).unwrap() {
+            // No data to validate
+        } else {
+            panic!();
         }
     }
 
@@ -639,14 +670,13 @@ mod tests {
         let _ = input.write_i32::<LittleEndian>(1);
         let _ = input.write_f64::<LittleEndian>(0.25f64);
         let _ = input.write_f64::<LittleEndian>(0.5f64);
-        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
-        match shape {
-            Shape::Point {point: p} => {
-                if p.x != 0.25f64 || p.y != 0.5f64 {
-                    panic!()
-                }
-            },
-            _ => panic!(),
+
+        if let (Shape::Point {point: p}, 20) = Shape::parse(&mut Cursor::new(input)).unwrap() {
+            if p.x != 0.25f64 || p.y != 0.5f64 {
+                panic!();
+            }
+        } else {
+            panic!();
         }
     }
 
@@ -656,77 +686,53 @@ mod tests {
         // Shape type
         let _ = input.write_i32::<LittleEndian>(8);
         // Bounding Box
-        let _ = input.write_f64::<LittleEndian>(-0.25f64);
-        let _ = input.write_f64::<LittleEndian>(-0.125f64);
-        let _ = input.write_f64::<LittleEndian>(0.25f64);
-        let _ = input.write_f64::<LittleEndian>(0.125f64);
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
         // Number of points
-        let _ = input.write_i32::<LittleEndian>(3);
-        // Three distinct points
-        let _ = input.write_f64::<LittleEndian>(1f64);
-        let _ = input.write_f64::<LittleEndian>(1f64);
-        let _ = input.write_f64::<LittleEndian>(2f64);
-        let _ = input.write_f64::<LittleEndian>(2f64);
-        let _ = input.write_f64::<LittleEndian>(5f64);
-        let _ = input.write_f64::<LittleEndian>(5f64);
-        let (shape, _) = Shape::parse(&mut Cursor::new(input)).unwrap();
-        match shape {
-            Shape::MultiPoint {bounding_box: b, points: p} => {
-                if b.x_min != -0.25f64 || b.y_min != -0.125f64 || b.x_max != 0.25f64 || b.y_max != 0.125f64 {
-                    panic!()
-                }
-                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64 || p[2].x != 5f64 || p[2].y != 5f64 {
-                    panic!()
-                }
-            },
-            _ => panic!(),
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64}];
+        let _ = input.write_i32::<LittleEndian>(points.len() as i32);
+        write_point_vec(&points, &mut input);
+
+        if let (Shape::MultiPoint {bounding_box: bb, points: p}, 88) = Shape::parse(&mut Cursor::new(input)).unwrap() {
+            if bb != bounding_box || p != points {
+                panic!();
+            }
+        } else {
+            panic!();
         }
+
     }
 
     #[test]
     fn test_parse_polygon_polyline() {
         let mut input: Vec<u8> = vec![];
-        // Shape type
-        let _ = input.write_i32::<LittleEndian>(3);
-        // Bounding Box
-        let _ = input.write_f64::<LittleEndian>(-0.25f64);
-        let _ = input.write_f64::<LittleEndian>(-0.125f64);
-        let _ = input.write_f64::<LittleEndian>(0.25f64);
-        let _ = input.write_f64::<LittleEndian>(0.125f64);
-        // Number of parts
-        let _ = input.write_i32::<LittleEndian>(2);
-        // Number of points
-        let _ = input.write_i32::<LittleEndian>(4);
-        // Two distinct parts
-        let _ = input.write_i32::<LittleEndian>(0);
-        let _ = input.write_i32::<LittleEndian>(2);
-        // Four distinct points
-        let _ = input.write_f64::<LittleEndian>(1f64);
-        let _ = input.write_f64::<LittleEndian>(1f64);
-        let _ = input.write_f64::<LittleEndian>(2f64);
-        let _ = input.write_f64::<LittleEndian>(2f64);
-        let _ = input.write_f64::<LittleEndian>(5f64);
-        let _ = input.write_f64::<LittleEndian>(5f64);
-        let _ = input.write_f64::<LittleEndian>(6f64);
-        let _ = input.write_f64::<LittleEndian>(6f64);
+        // Shape type - 4 bytes
+        input.write_i32::<LittleEndian>(3).unwrap();
+        // Bounding Box - 32 bytes
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+
+        let parts: Vec<i32> = vec![0,2];
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64},Point{x: 6f64, y: 6f64}];
+
+        // Write lengths - 8 bytes
+        input.write_i32::<LittleEndian>(parts.len() as i32).unwrap();
+        input.write_i32::<LittleEndian>(points.len() as i32).unwrap();
+
+        // Write values - 8 + 64 bytes
+        write_i32_vec(&parts, &mut input);
+        write_point_vec(&points, &mut input);
 
         // Then see whether the data gets parsed correctly
-        let (polyline, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
-        match &polyline {
-            &Shape::PolyLine {bounding_box: ref b, parts: ref n, points: ref p} => {
-                if b.x_min != -0.25f64 || b.y_min != -0.125f64
-                || b.x_max !=  0.25f64 || b.y_max !=  0.125f64 {
-                    panic!()
-                }
-                if p[0].x != 1f64 || p[0].y != 1f64 || p[1].x != 2f64 || p[1].y != 2f64
-                || p[2].x != 5f64 || p[2].y != 5f64 || p[3].x != 6f64 || p[3].y != 6f64 {
-                    panic!()
-                }
-                if n[0] != 0 || n[1] != 2 {
-                    panic!()
-                }
-            },
-            _ => panic!(),
+        let polyline: Shape;
+        if let (Shape::PolyLine {bounding_box: bb, parts: pa, points: pt}, 116) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if bb != bounding_box || pa != parts || pt != points {
+                panic!()
+            }
+            // Keep track of the parsed data
+            polyline = Shape::PolyLine{bounding_box: bb, parts: pa, points: pt};
+        } else {
+            panic!()
         }
 
         // Put 5 as shape type instead of three (structure is the same)
@@ -736,14 +742,281 @@ mod tests {
         let input = temp;
 
         // Parse that and see whether the two are equal by fields
-        let (polygon, _) = Shape::parse(&mut Cursor::new(&input)).unwrap();
-
-        if let Shape::PolyLine {bounding_box: lb, parts: ln, points: lp} = polyline  {
-            if let Shape::Polygon {bounding_box: gb, parts: gn, points: gp} = polygon {
-                if gb != lb || gn != ln || gp != lp {
+        if let (Shape::Polygon {bounding_box: bb, parts: pa, points: pt}, 116) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if let Shape::PolyLine {bounding_box: lb, parts: ln, points: lp} = polyline  {
+                if bb != lb || pa != ln || pt != lp {
                     panic!()
                 }
             } else {
+                panic!()
+            }
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn test_parse_pointm() {
+        let mut input: Vec<u8> = Vec::new();
+        let _ = input.write_i32::<LittleEndian>(21);
+        let _ = input.write_f64::<LittleEndian>(1.0);
+        let _ = input.write_f64::<LittleEndian>(1.2);
+        let _ = input.write_f64::<LittleEndian>(1.4);
+
+        if let (Shape::PointM {point}, 28) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if point.x != 1.0 || point.y != 1.2 || point.m != 1.4 {
+                panic!()
+            }
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn test_parse_multipointm() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type
+        input.write_i32::<LittleEndian>(28).unwrap();
+        // Bounding Box
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+        // Number of points
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64}];
+        input.write_i32::<LittleEndian>(points.len() as i32).unwrap();
+        write_point_vec(&points, &mut input);
+
+        // Measures
+        let mrange = vec![10.1, 91.1];
+        let ms = vec![33.0, 91.1, 10.1];
+        write_f64_vec(&mrange, &mut input);
+        write_f64_vec(&ms, &mut input);
+
+        if let (Shape::MultiPointM {bounding_box: bb, points: p, m, m_range: rm}, 128) = Shape::parse(&mut Cursor::new(input)).unwrap() {
+            if bb != bounding_box || p != points || m != ms || rm.min != mrange[0] || rm.max != mrange[1] {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_parse_polylinem_polygonm() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type - 4 bytes
+        input.write_i32::<LittleEndian>(23).unwrap();
+        // Bounding Box - 32 bytes
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+
+        let parts: Vec<i32> = vec![0,2];
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64},Point{x: 6f64, y: 6f64}];
+
+        // Write lengths - 8 bytes
+        input.write_i32::<LittleEndian>(parts.len() as i32).unwrap();
+        input.write_i32::<LittleEndian>(points.len() as i32).unwrap();
+
+        // Write values - 8 + 64 bytes
+        write_i32_vec(&parts, &mut input);
+        write_point_vec(&points, &mut input);
+
+        // Write M shit - 16 bytes + 4 * 8 bytes
+        let m_range = vec![1.0, 50.0];
+        let m = vec![1.0, 50.0, 49.1, 26.1];
+        write_f64_vec(&m_range, &mut input);
+        write_f64_vec(&m, &mut input);
+
+        // Then see whether the data gets parsed correctly
+        let polyline: Shape;
+        if let (Shape::PolyLineM {bounding_box: bb, parts: pa, points: pt, m_range: rm, m: ms}, 164) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if bb != bounding_box || pa != parts || pt != points || ms != m || rm.min != m_range[0] || rm.max != m_range[1] {
+                panic!()
+            }
+            // Keep track of the parsed data
+            polyline = Shape::PolyLineM {bounding_box: bb, parts: pa, points: pt, m_range: rm, m: ms};
+        } else {
+            panic!()
+        }
+
+        // Put 5 as shape type instead of three (structure is the same)
+        let mut temp: Vec<u8> = vec![];
+        let _ = temp.write_i32::<LittleEndian>(25);
+        temp.extend_from_slice(&input[4..]);
+        let input = temp;
+
+        // Parse that and see whether the two are equal by fields
+        if let (Shape::PolygonM {bounding_box: bb, parts: pa, points: pt, m_range: rm, m: ms}, 164) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if let Shape::PolyLineM {bounding_box: bbb, parts: bpa, points: bpt, m_range: brm, m: bms} = polyline  {
+                if bb != bbb || pa != bpa || pt != bpt || rm != brm || ms != bms {
+                    panic!()
+                }
+            } else {
+                panic!()
+            }
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn test_parse_pointz() {
+        let mut input: Vec<u8> = Vec::new();
+        let _ = input.write_i32::<LittleEndian>(11);
+        let _ = input.write_f64::<LittleEndian>(1.0);
+        let _ = input.write_f64::<LittleEndian>(1.2);
+        let _ = input.write_f64::<LittleEndian>(1.4);
+        let _ = input.write_f64::<LittleEndian>(1.6);
+
+        if let (Shape::PointZ {point}, 36) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if point.x != 1.0 || point.y != 1.2 || point.z != 1.4 || point.m != 1.6 {
+                panic!()
+            }
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn test_parse_multipointz() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type
+        input.write_i32::<LittleEndian>(18).unwrap();
+        // Bounding Box
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+        // Number of points
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64}];
+        input.write_i32::<LittleEndian>(points.len() as i32).unwrap();
+        write_point_vec(&points, &mut input);
+
+        // Z values
+        let z_range = vec![11.1, 92.1];
+        let z = vec![85.5, 92.1, 11.1];
+        write_f64_vec(&z_range, &mut input);
+        write_f64_vec(&z, &mut input);
+
+        // Measures
+        let m_range = vec![10.1, 91.1];
+        let m = vec![33.0, 91.1, 10.1];
+        write_f64_vec(&m_range, &mut input);
+        write_f64_vec(&m, &mut input);
+
+        if let (Shape::MultiPointZ {bounding_box: bb, points: p, z: zs, z_range: rz, m: ms, m_range: rm}, 168) = Shape::parse(&mut Cursor::new(input)).unwrap() {
+            if bb != bounding_box || p != points || m != ms || rm.min != m_range[0] || rm.max != m_range[1] || z != zs || rz.min != z_range[0] || rz.max != z_range[1] {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_parse_polylinez_polygonz() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type - 4 bytes
+        input.write_i32::<LittleEndian>(13).unwrap();
+        // Bounding Box - 32 bytes
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+
+        let parts: Vec<i32> = vec![0,2];
+        let points = vec![Point{x: 1f64, y: 1f64},Point{x: 2f64, y: 2f64},Point{x: 5f64, y: 5f64},Point{x: 6f64, y: 6f64}];
+
+        // Write lengths - 8 bytes
+        input.write_i32::<LittleEndian>(parts.len() as i32).unwrap();
+        input.write_i32::<LittleEndian>(points.len() as i32).unwrap();
+
+        // Write values - 8 + 64 bytes
+        write_i32_vec(&parts, &mut input);
+        write_point_vec(&points, &mut input);
+
+        // Write Z shit - 16 bytes + 4 * 8 bytes
+        let z_range = vec![51.0, 100.0];
+        let z = vec![51.0, 100.0, 99.1, 76.1];
+        write_f64_vec(&z_range, &mut input);
+        write_f64_vec(&z, &mut input);
+
+        // Write M shit - 16 bytes + 4 * 8 bytes
+        let m_range = vec![1.0, 50.0];
+        let m = vec![1.0, 50.0, 49.1, 26.1];
+        write_f64_vec(&m_range, &mut input);
+        write_f64_vec(&m, &mut input);
+
+        // Then see whether the data gets parsed correctly
+        let polyline: Shape;
+        if let (Shape::PolyLineZ {bounding_box: bb, parts: pa, points: pt, z_range: rz, z: zs, m_range: rm, m: ms}, 212) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if bb != bounding_box || pa != parts || pt != points || ms != m || rm.min != m_range[0] || rm.max != m_range[1] || zs != z || rz.min != z_range[0] || rz.max != z_range[1] {
+                panic!()
+            }
+            // Keep track of the parsed data
+            polyline = Shape::PolyLineZ {bounding_box: bb, parts: pa, points: pt, z_range: rz, z: zs, m_range: rm, m: ms};
+        } else {
+            panic!()
+        }
+
+        // Put 5 as shape type instead of three (structure is the same)
+        let mut temp: Vec<u8> = vec![];
+        let _ = temp.write_i32::<LittleEndian>(15);
+        temp.extend_from_slice(&input[4..]);
+        let input = temp;
+
+        // Parse that and see whether the two are equal by fields
+        if let (Shape::PolygonZ {bounding_box: bb, parts: pa, points: pt, z_range: rz, z: zs, m_range: rm, m: ms}, 212) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if let Shape::PolyLineZ {bounding_box: bbb, parts: bpa, points: bpt, z_range: brz, z: bzs, m_range: brm, m: bms} = polyline  {
+                if bb != bbb || pa != bpa || pt != bpt || rm != brm || ms != bms || rz != brz || zs != bzs {
+                    panic!()
+                }
+            } else {
+                panic!()
+            }
+        } else {
+            panic!()
+        }
+    }
+
+    #[test]
+    fn test_parse_multipatch() {
+        let mut input: Vec<u8> = vec![];
+        // Shape type - 4 bytes
+        input.write_i32::<LittleEndian>(31).unwrap();
+
+        // Bounding Box - 32 bytes @36
+        let bounding_box = BoundingBox{x_min: -0.25f64, y_min: -0.125f64, x_max: 0.25f64, y_max: 0.125f64};
+        write_box(&bounding_box, &mut input);
+
+        // Parts, part types and Points - 8 + 2 * (3 * 4) + (12 * 16) bytes @260
+        input.write_i32::<LittleEndian>(3).unwrap();    // number of parts
+        input.write_i32::<LittleEndian>(12).unwrap();   // number of points
+        write_i32_vec(&vec![0, 4, 8], &mut input);      // parts
+        write_i32_vec(&vec![0, 0, 0], &mut input);      // part types
+        write_point_vec(&vec![                          // points
+            Point {x: 0.0, y: 0.0},
+            Point {x: 1.0, y: 0.5},
+            Point {x: 0.0, y: 1.0},
+            Point {x: 1.0, y: 1.5},
+
+            Point {x: 0.0, y: 2.0},
+            Point {x: 1.0, y: 2.5},
+            Point {x: 0.0, y: 3.0},
+            Point {x: 1.0, y: 3.5},
+
+            Point {x: 0.0, y: 4.0},
+            Point {x: 1.0, y: 4.5},
+            Point {x: 0.0, y: 5.0},
+            Point {x: 1.0, y: 5.5},
+            ], &mut input);
+
+        // Z values - 2 * 8 + 12 * 8 bytes @ 372
+        write_f64_vec(&vec![0.0, 2.0], &mut input);
+        write_f64_vec(&vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0], &mut input);
+
+        // M values - 2 * 8 + 12 * 8 bytes @ 484
+        write_f64_vec(&vec![0.17, 0.98], &mut input);
+        write_f64_vec(&vec![0.32, 0.56, 0.98, 0.17, 0.55, 0.51, 0.501, 0.42, 0.47, 0.6, 0.51, 0.5], &mut input);
+
+        if let (Shape::MultiPatch {bounding_box: bb, parts, part_types, points, z_range, z, m_range, m}, 484) = Shape::parse(&mut Cursor::new(&input)).unwrap() {
+            if bounding_box != bb || parts[0] != 0 || part_types[1] != PatchType::TriangleStrip || points[8].y != 4f64
+            || z_range.max != 2.0 || z[8] != 2.0 || m_range.max != 0.98 || m[8] != 0.47 {
                 panic!()
             }
         } else {
