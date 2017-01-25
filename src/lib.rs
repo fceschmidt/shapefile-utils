@@ -30,11 +30,12 @@ extern crate byteorder;
 extern crate dbf;
 
 pub mod shape;
-pub mod shapefile;
+mod shapefile;
 mod shpfile;
 mod shxfile;
 mod dbffile;
 
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::fs::File;
 
@@ -107,6 +108,15 @@ struct ShxFile {
 struct DbfFile {
     /// The `dbf` file handle
     file: dbf::DbfFile<File>,
+}
+
+/// Represents a record in the shapefile - has shape and metadata.
+#[derive(Debug)]
+pub struct ShapefileRecord {
+    /// The shape as defined in the SHP file.
+    pub shape: shape::Shape,
+    /// The metadata as it comes from the DBF file.
+    pub metadata: HashMap<String, dbf::Field>
 }
 
 /// The joint struct which makes the API of all of this.

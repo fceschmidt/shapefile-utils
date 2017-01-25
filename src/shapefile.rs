@@ -9,19 +9,8 @@ use std::io::Error;
 use std::iter::Iterator;
 use std::path::Path;
 
-use dbf::Field;
-
-use super::{Shapefile, ShpFile, DbfFile, ShxFile, ShapefileRecordIterator};
+use super::{Shapefile, ShapefileRecord, ShpFile, DbfFile, ShxFile, ShapefileRecordIterator};
 use super::shape::Shape;
-
-/// Represents a record in the shapefile - has shape and metadata.
-#[derive(Debug)]
-pub struct Record {
-    /// The shape as defined in the SHP file.
-    pub shape: Shape,
-    /// The metadata as it comes from the DBF file.
-    pub metadata: HashMap<String, Field>
-}
 
 impl Shapefile {
     /// Creates a new `Shapefile` instance by taking all three files specified in the spec.
@@ -40,8 +29,8 @@ impl Shapefile {
     }
 
     /// Gives the data behind the record number
-    pub fn record(&mut self, id: u64) -> Option<Record> {
-        let mut result = Record {shape: Shape::new(), metadata: HashMap::new()};
+    pub fn record(&mut self, id: u64) -> Option<ShapefileRecord> {
+        let mut result = ShapefileRecord {shape: Shape::new(), metadata: HashMap::new()};
 
         match self.shp_file.record(&mut self.shx_file, id) {
             Some(r) => result.shape = r.shape,
@@ -63,7 +52,7 @@ impl Shapefile {
 }
 
 impl<'a> Iterator for ShapefileRecordIterator<'a> {
-    type Item = Record;
+    type Item = ShapefileRecord;
 
     fn next(&mut self) -> Option<Self::Item> {
         let id = self.id;
