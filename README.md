@@ -28,8 +28,8 @@ Then you can create a Shapefile object, for which you need to specify, in this o
 
 ```rust
 let mut my_shapefile = Shapefile::new(
-    &Path::new("assets/test.shp"), 
-    &Path::new("assets/test.shx"), 
+    &Path::new("assets/test.shp"),
+    &Path::new("assets/test.shx"),
     &Path::new("assets/test.dbf")).unwrap();
 ```
 
@@ -50,11 +50,12 @@ Good luck!
 # Missing features
 
 * Moar unit tests & robustness tests
-* Restrict object visibility as much as possible
+* ~~Restrict object visibility as much as possible~~ Done!
 * Review Shape parsing
 * Moar documentation comments
 * ???
 * Writing, if anybody has a use case for that
+* See [issue tracker](https://github.com/fceschmidt/shapefile-utils/issues)
 
 # License
 
