@@ -507,7 +507,8 @@ impl Shape {
             Self::STY_POINT
             | Self::STY_POINT_M
             | Self::STY_POINT_Z => {
-                return Self::parse_point_type(file, shape_type);
+                let (sh, sz) = try!(Self::parse_point_type(file, shape_type));
+                return Ok((sh, sz + length))
             },
             _ => (),
         }
