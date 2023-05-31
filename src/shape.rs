@@ -266,10 +266,10 @@ impl BoundingBox {
     pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
         let mut result = Self::new();
 
-        result.x_min = try!(file.read_f64::<LittleEndian>());
-        result.y_min = try!(file.read_f64::<LittleEndian>());
-        result.x_max = try!(file.read_f64::<LittleEndian>());
-        result.y_max = try!(file.read_f64::<LittleEndian>());
+        result.x_min = (file.read_f64::<LittleEndian>())?;
+        result.y_min = (file.read_f64::<LittleEndian>())?;
+        result.x_max = (file.read_f64::<LittleEndian>())?;
+        result.y_max = (file.read_f64::<LittleEndian>())?;
 
         Ok(result)
     }
@@ -285,8 +285,8 @@ impl Point {
     pub fn parse<T: Read>(file: &mut T) -> Result<Self, Error> {
         let mut result = Self::new();
 
-        result.x = try!(file.read_f64::<LittleEndian>());
-        result.y = try!(file.read_f64::<LittleEndian>());
+        result.x = (file.read_f64::<LittleEndian>())?;
+        result.y = (file.read_f64::<LittleEndian>())?;
 
         Ok(result)
     }
@@ -328,7 +328,7 @@ impl Shape {
     {
         let mut result: Vec<V> = vec![];
         for _ in 0..n {
-            result.push(try!(read_function(file)));
+            result.push((read_function(file))?);
         }
         Ok(result)
     }
@@ -354,17 +354,17 @@ impl Shape {
             // Points come first
             Self::STY_POINT => {
                 // X and Y, both double and little endian
-                let v = try!(Self::parse_f64_array(file, 2));
+                let v = (Self::parse_f64_array(file, 2))?;
                 Ok((Shape::Point {point: Point{x: v[0], y: v[1]}}, 16))
             },
             Self::STY_POINT_M => {
                 // X, Y and M, both double and little endian
-                let v = try!(Self::parse_f64_array(file, 3));
+                let v = (Self::parse_f64_array(file, 3))?;
                 Ok((Shape::PointM {point: PointM{x: v[0], y: v[1], m: v[2]}}, 24))
             },
             Self::STY_POINT_Z => {
                 // X, Y, M and Z, both double and little endian
-                let v = try!(Self::parse_f64_array(file, 4));
+                let v = (Self::parse_f64_array(file, 4))?;
                 Ok((Shape::PointZ {point: PointZ{x: v[0], y: v[1], z: v[2], m: v[3]}}, 32))
             },
             _ => Err(Error::new(ErrorKind::Other, "Supposed point not of any point type!")),
